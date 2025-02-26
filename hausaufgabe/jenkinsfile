@@ -1,0 +1,64 @@
+pipeline {
+    agent any
+
+    tools {
+        nodejs 'NodeJS' // Name des installierten NodeJS-Tools in Jenkins
+    }
+
+    environment {
+         EC2_USER = 'ubuntu'
+        EC2_HOST = '3.66.88.183' // IP-Adresse deiner EC2-Instanz
+        DEPLOY_PATH = '/home/ubuntu/app' // Zielpfad auf dem EC2-Server
+        SSH_CREDENTIALS = 'jenkins-ec2-key'  // Jenkins SSH-Schlüssel
+    }
+
+    stages {
+        stage('Clone Repository') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/jihenmich/meine-react-app-jenkins.git'
+            }
+        }
+
+        stage('Abhängigkeiten installieren') {
+            steps {
+                script {
+                    // npm-Abhängigkeiten installieren
+                    sh 'npm install'
+                }
+            }
+        }
+
+        stage('React-Anwendung bauen') {
+            steps {
+                script {
+                    // Build der React-Anwendung
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('AWS EC2 Verbindung herstellen') {
+            steps {
+                script {
+                    // Überprüfen, ob Jenkins Zugriff auf die EC2-Instanz hat (über SSH)
+                    withCredentials([file(credentialsId: 'jenkins-ec2-key', variable: 'EC2_KEY_PATH')]) {
+                        sh "chmod 400 ${EC2_KEY_PATH}" // Sicherstellen, dass der Schlüssel korrekt ist
+                    }
+                }
+            }
+        }
+
+        stage('Alte Version entfernen') {
+            steps {
+                 script {
+                    withCredentials([file(credentialsId: 'jenkins-ec2-key', variable: 'EC2_KEY_PATH')]) {
+                        // Alte Version der React-App auf der EC2-Instanz entfernen
+                        sh "ssh -i ${EC2_KEY_PATH} ${EC2_USER}@${EC2_HOST} 'rm -rf /var/www/html/*' || exit 1"
+                    }
+                }
+             }
+        }
+
+    }
+}
