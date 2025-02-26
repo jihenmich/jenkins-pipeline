@@ -1,0 +1,52 @@
+pipeline {
+    agent any
+
+    environment {
+        EC2_USER = 'ubuntu'
+        EC2_HOST = '3.66.88.183' // IP-Adresse deiner EC2-Instanz
+        DEPLOY_PATH = '/home/ubuntu/app' // Zielpfad auf dem EC2-Server
+        SSH_CREDENTIALS = 'jenkins-ec2-key'  // Jenkins SSH-Schlüssel
+    }
+    
+    tools {
+        nodejs 'NodeJS'
+    }
+
+    stages {
+        stage('Clone Repository') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/jihenmich/meine-react-app-jenkins.git'
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh 'node -v && npm -v' // Check, ob Node.js wirklich verfügbar ist
+                sh 'npm install'
+            }
+        }
+
+        stage('Build React App') {
+            steps {
+                sh 'npm run build'
+                sh 'ls -l dist' // Zeigt den Inhalt des Build-Verzeichnisses an, um sicherzustellen, dass es existiert
+            }
+        }
+
+        stage('Deploy to EC2') {
+            steps {
+                script {
+                    sshagent(credentials: [SSH_CREDENTIALS]) {
+                        sh """
+                        echo "Deploying to EC2..."
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} 'mkdir -p ${DEPLOY_PATH}'
+                        scp -o StrictHostKeyChecking=no -r dist/* ${EC2_USER}@${EC2_HOST}:${DEPLOY_PATH}
+                        echo "Deployment finished!"
+                        """
+                    }
+                }
+            }
+        }
+    }
+}
