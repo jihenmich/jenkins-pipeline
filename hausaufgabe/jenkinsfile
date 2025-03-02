@@ -1,15 +1,15 @@
 pipeline {
     agent any
 
-    tools {
-        nodejs 'NodeJS' // Name des installierten NodeJS-Tools in Jenkins
+    environment {
+        EC2_USER = 'ubuntu'
+        EC2_HOST = '3.66.88.183' 
+        DEPLOY_PATH = '/home/ubuntu/app' 
+        SSH_CREDENTIALS = 'jenkins-ec2-key'  
     }
 
-    environment {
-         EC2_USER = 'ubuntu'
-        EC2_HOST = '3.66.88.183' // IP-Adresse deiner EC2-Instanz
-        DEPLOY_PATH = '/home/ubuntu/app' // Zielpfad auf dem EC2-Server
-        SSH_CREDENTIALS = 'jenkins-ec2-key'  // Jenkins SSH-Schlüssel
+    tools {
+        nodejs "nodejs"
     }
 
     stages {
@@ -20,45 +20,73 @@ pipeline {
             }
         }
 
-        stage('Abhängigkeiten installieren') {
+        stage('Linting') {
             steps {
-                script {
-                    // npm-Abhängigkeiten installieren
-                    sh 'npm install'
+                sh 'npm install'
+                sh 'npm run lint'
+            }
+        }
+
+        stage('Testing') {
+            steps {
+                sh 'npm test'
+            }
+        }
+
+        stage('Build the App') {
+            steps {
+                sh 'npm run build'
+                sh 'ls -la'
+            }
+        }
+
+        stage('Deploy to EC2') {
+            steps {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: SSH_CREDENTIALS,
+                    keyFileVariable: 'EC2_KEY'
+                )]) {
+                    // Neue Version hochladen:
+                    sh '''
+                        scp -o StrictHostKeyChecking=no \
+                        -i $EC2_KEY \
+                        -r build \
+                        $EC2_USER@$EC2_HOST:/home/ubuntu/
+                    '''
+                    // Alte Version löschen, neue Version rüberkopieren, nginx neustarten: 
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no \
+                        -i $EC2_KEY \
+                        $EC2_USER@$EC2_HOST \
+                        "sudo rm -rf $DEPLOY_PATH/* &&
+                        sudo cp -r /home/ubuntu/build/* $DEPLOY_PATH/ &&
+                        sudo systemctl restart nginx"
+                    '''
                 }
             }
         }
 
-        stage('React-Anwendung bauen') {
+        stage('Verify Deployment') {
             steps {
                 script {
-                    // Build der React-Anwendung
-                    sh 'npm run build'
-                }
-            }
-        }
+                    def response = sh(
+                        script: "curl -s -o /dev/null -w '%{http_code}' http://$EC2_HOST/",
+                        returnStdout: true
+                    ).trim()
 
-        stage('AWS EC2 Verbindung herstellen') {
-            steps {
-                script {
-                    // Überprüfen, ob Jenkins Zugriff auf die EC2-Instanz hat (über SSH)
-                    withCredentials([file(credentialsId: 'jenkins-ec2-key', variable: 'EC2_KEY_PATH')]) {
-                        sh "chmod 400 ${EC2_KEY_PATH}" // Sicherstellen, dass der Schlüssel korrekt ist
+                    if (response == "200") {
+                        echo "Deployment successful!"
+                    } else {
+                        echo "Deployment unsuccessful :("
                     }
                 }
             }
         }
+    }
 
-        stage('Alte Version entfernen') {
-            steps {
-                 script {
-                    withCredentials([file(credentialsId: 'jenkins-ec2-key', variable: 'EC2_KEY_PATH')]) {
-                        // Alte Version der React-App auf der EC2-Instanz entfernen
-                        sh "ssh -i ${EC2_KEY_PATH} ${EC2_USER}@${EC2_HOST} 'rm -rf /var/www/html/*' || exit 1"
-                    }
-                }
-             }
+    post {
+        always {
+            echo 'SCM webhook funktioniert!'
         }
-
     }
 }
